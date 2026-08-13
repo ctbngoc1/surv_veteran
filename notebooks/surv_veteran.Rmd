@@ -1,0 +1,307 @@
+---
+output:
+  pdf_document:
+    latex_engine: lualatex 
+---
+
+```{r}
+library(survival)
+library(ggplot2)
+library(dplyr)
+library(caret)
+library(psych)
+library(car)
+library(survminer)
+```
+
+```{r}
+set.seed(10)
+
+# Load dataset veteran 
+df <- veteran
+head(df)
+```
+
+The dataset is provided from an experiment between 2 treatment groups for lung cancer, containing 137 observations of 8 variables:
+
+- **trt:** Treatment group: 1 = Standard, 2 = Test;
+
+- **celltype:** Type of cell: 1 = Squamous, 2 = Smallcell, 3 = Adeno, 4 = Large;
+
+- **time:** Survival time (from start of study to death), in days;
+
+- **status:** Censoring status: 0 = Patient death was not observed (right-censored), 1 = Patient death was observed (event observed);
+
+- **karno:** Karnofsky performance score (quantifies cancer patients’ general well-being and activities of daily life): 0 = Dead to 100 = Normal;
+
+- **diagtime:** Time from diagnosis to study enrollment, in months;
+
+- **age:** Age of the patient in years;
+
+- **prior:** 0 = No prior therapy, 10 = Prior therapy.
+
+The response variable in the survival analysis is the survival outcome, represented by the pair (time, status).
+
+```{r}
+str(df)
+```
+
+```{r}
+# Convert categorical variables to factors 
+df$trt   <- factor(df$trt, levels = c(1, 2),
+                        labels = c("Standard", "Test"))
+df$prior <- factor(df$prior, levels = c(0, 10),
+                        labels = c("No", "Yes"))
+df$status <- factor(df$status, levels = c(0, 1),
+                   labels = c("Right-censored", "Event observed"))
+```
+
+However, the censoring status variable *(status)* should be kept as numeric for Surv().
+
+```{r}
+str(df)
+```
+
+```{r}
+summary(df)
+```
+
+- The 2 treatment groups (*trt*) are almost equal in size, making the comparison between the treatment groups more reliable.
+
+- Patient age ranged from 34 to 81 years.
+
+- 70.8% of patients haven't had prior therapy.
+
+- 9 out of 137 patients were still alive at the end of the study (right-censored).
+
+- The 3rd quartile of the time from diagnosis to study enrollment (*diagtime*) is much lower than the maximum value, suggesting that this variable is right-skewed, with a few exceptionally high values. Similarly, the survival time (time) also appears to be heavily right-skewed.
+
+```{r}
+# Create a combined stratification variable
+df$strata <- interaction(df$status, df$trt)
+
+# Split train - test as 80:20, preserving the class distributions of status and trt (usually only status class distribution needs to be preserved for prediction, but here we want trt class distribution to be reflective of the original data for analysis as well)
+train_indices <- createDataPartition(df$strata, p = 0.8, list = FALSE)
+test_indices <- setdiff(1:nrow(df), train_indices)
+
+train  <- df[train_indices, ]
+test   <- df[test_indices, ]
+```
+
+Note that you only need to do train - test split if you are going to do survival time prediction later. Otherwise, survival analysis is usually performed on the entire dataset.
+
+```{r}
+# Remove strata columns 
+train$strata <- NULL
+test$strata <- NULL
+```
+
+```{r}
+# Check missing values 
+colSums(is.na(train))
+```
+
+No missing values detected.
+
+```{r}
+# Check outliers of numeric variables 
+boxplot(train[, c("time", "karno", "diagtime", "age")])
+```
+
+Both survival time (*time*) and time from diagnosis to study enrollment (*diagtime*) exhibit right-skewness and contain some high-value boxplot outliers. Since there is no evidence that these boxplot outliers are problematic, they are retained in the analysis for the time being.
+
+```{r}
+# Correlation plot (only numeric predictors)
+pairs.panels(train[, c("karno", "diagtime", "age")])
+```
+
+The correlation plot indicates that the numeric predictors are only weakly correlated with one another, indicating that multicollinearity is unlikely to be a concern.
+
+Some survival time prediction models (especially regression-based models) like Cox Proportional Hazards or Accelerated Failure Time (AFT) require multicollinearity check. Other models (especially tree-based models) like Random Survival Forest (RSF) or Survival SVM generally can handle multicollinearity well.
+
+```{r}
+# Muticollinearity checking (only numeric predictors)
+model <- lm(time ~ karno + diagtime + age, data = train)
+vif(model)
+```
+
+All VIF values are very close to 1, indicating no evidence of multicollinearity.
+
+```{r}
+# # Standardize training set then apply to test set (only standardize numeric predictors)
+# train_scaled <- train
+# train_scaled[, c("karno", "diagtime", "age")] <- scale(train[, c("karno", "diagtime", "age")])
+# 
+# train_mean <- attr(scale(train[, c("karno", "diagtime", "age")]), "scaled:center")
+# train_std <- attr(scale(train[, c("karno", "diagtime", "age")]), "scaled:scale")
+# 
+# test_scaled <- test
+# test_scaled[, c("karno", "diagtime", "age")] <- scale(test[, c("karno", "diagtime", "age")], center = train_mean, scale = train_std)
+```
+
+Standardization for regression-based models (like AFT) is beneficial when comparing the effect sizes of predictors and is generally recommended for penalized regression methods (LASSO, Ridge, ElasticNet), but will cause difficulty in interpretation of coefficients.
+
+In this dataset, the 3 numeric predictors are karno (values from 10 to 99), diagtime (values from 1 to 87 months), and age (values from 34 to 81 years). Since these variables have relatively similar value ranges, standardization is unlikely to provide much benefits for model fitting. Therefore, standardization wasn't applied in this project.
+
+```{r}
+# Convert status back to numeric for Surv()
+train$status <- ifelse(train$status == "Event observed", 1, 0)
+test$status <- ifelse(test$status == "Event observed", 1, 0)
+```
+
+```{r}
+# Overall Kaplan - Meier curve 
+km_fit <- survfit(Surv(time, status) ~ 1, data = train)
+km_fit_plt <- ggsurvplot(km_fit, data = train, conf.int = TRUE, legend = "none",
+           xlab = "Time (days)", ylab = "Survival probability")  
+# conf.int: 95% Confidence Interval 
+plot.new() 
+print(km_fit_plt, newpage = FALSE)
+```
+
+The overall curve indicates poor overall survival among patients in the veteran lung cancer dataset, with a rapid decline in survival probability during the first 300 - 400 days after study entry. After approximately 600 days, the survival curve drops close to 0, indicating that only a very small proportion of patients survived beyond this time. The 95% confidence interval becomes wider over time because fewer patients remain at risk (alive and still being followed), making the survival estimates less reliable at later time points.
+
+### Treatment groups comparison 
+
+```{r}
+# Kaplan-Meier curve by treatment
+km_trt <- survfit(Surv(time, status) ~ trt, data = train)
+km_trt_plt <- ggsurvplot(km_trt, data = train, conf.int = TRUE, 
+                         risk.table = TRUE, legend.title = "Treatment", 
+                         xlab = "Time (days)", ylab = "Survival probability")
+plot.new() 
+print(km_trt_plt$plot, newpage = FALSE)
+```
+
+Both groups have very poor survival, with survival probability dropping rapidly during the first 300 - 400 days after study entry. The Standard treatment appears to have slightly higher survival probabilities early on, but then quickly approached 0 around day 550 while the Test treatment seems to have survival probabilities slightly above 0 until the end of the study.
+
+The confidence bands overlap considerably, especially after the first 100 - 200 days, suggesting that the estimated survival probabilities for the two treatment groups are not clearly distinguishable. In other words, the difference between the curves may simply be due to sampling variability rather than treatment effect.
+
+```{r}
+# Risk table 
+print(km_trt_plt$table)
+```
+
+The risk table indicates that both treatment groups began with a similar number of patients at risk and experienced a gradual decline over the study period. The Test group experienced a faster decline in number of patients at risk during the first 250 days. However, between approximately 250 and 500 days, the Standard group experienced a more rapid decline, while the number of patients at risk in the Test group decreased more gradually thereafter.
+
+By approximately 500 days, only 1 patient remained at risk in the Standard group and 2 patients remained at risk in the Test group. Beyond approximately 750 days, no patients remained at risk in the Standard group, while 2 patient remained at risk in the Test group until the end of the study.
+
+```{r}
+# Log - rank test
+survdiff(Surv(time, status) ~ trt, data = train)
+```
+
+***Observed** = The actual number of deaths in each group. **Expected** = The number of deaths expected if the two groups had the same survival distribution.*
+
+***H0:** There is no difference in survival between the Standard and Test treatment groups.*
+
+***H1:** There is a difference in survival between the Standard and Test treatment groups.*
+
+Since the p-value = 0.5 \> 0.05, the log-rank test is not statistically significant at 5% significance level, indicating no significant difference in survival between the Standard and Test treatment groups.
+
+### Celltype groups comparison
+
+```{r}
+# Kaplan-Meier curve by celltype 
+km_ct <- survfit(Surv(time, status) ~ celltype, data = train)
+km_ct_plt <- ggsurvplot(km_ct, data = train, conf.int = TRUE, 
+                        risk.table = TRUE, legend.title = "Celltypes", 
+                        xlab = "Time (days)", ylab = "Survival probability")
+plot.new() 
+print(km_ct_plt$plot, newpage = FALSE)
+```
+
+The survival experiences differ noticeably among the four cell types. The squamous cell group generally exhibits the highest survival probabilities throughout most of the study period, whereas the small cell and adeno groups show the steepest declines in survival probability, indicating poorer survival outcomes. The large cell group demonstrates intermediate survival, with a more gradual decline than the other groups during the first 250 days.
+
+The curve corresponding to the adeno cell type approached 0 rapidly after around the first 200 days. The small cell and large cell curves extended to approximately 400 and 550 days, respectively, while the squamous cell curve stayed around 0.15 until the end of the study.
+
+```{r}
+# Risk table 
+print(km_ct_plt$table)
+```
+
+The risk table shows that the number of patients at risk decreased steadily across all four cell types over the study period. The adeno group experienced the fastest decline, with no patients remaining at risk by approximately 250 days. The small cell group also declined rapidly, with no patients remaining at risk by day 500.
+
+In contrast, patients in the large cell and squamous cell groups remained at risk for a longer period. At approximately 500 days, 1 patient remained at risk in the large cell group and 2 patients remained at risk in the squamous cell group. Beyond approximately 750 days, only the squamous cell group had patients remaining at risk, with 2 patients under observation until the end of the study.
+
+```{r}
+# Log - rank test 
+survdiff(Surv(time, status) ~ celltype, data = train)
+```
+
+Since the p-value = 0.001 \< 0.05, the log-rank test is statistically significant at 5% significance level, indicating a significant difference in survival between the celltype groups.
+
+```{r}
+# Cox proportional hazards model
+cox_model <- coxph(Surv(time, status) ~ ., data = train)
+summary(cox_model)
+```
+
+The Cox PH model was statistically significant (p-value \< 0.001 for Likelihood ratio test, Wald test and Score Log-rank test), indicating that at least one predictor was associated with patient survival. The model achieved a Harrell's C index of 0.731, suggesting good discriminative ability between patients with different risks of experiencing the event.
+
+According to the Cox PH model results, Karnofsky performance score was significantly associated with survival. The Kaplan - Meiers curve and log - rank test earlier also showed that celltype was significantly associated with survival. In contrast, treatment group, diagnosis time, age, and prior therapy were not significantly associated with survival after adjustment for the other variables.
+
+In the Cox PH model results, among the cell type comparisons,
+
+- Patients with small celltype had a significantly different hazard of death than patients with squamous celltype after holding other predictors constant (*p* = 0.038 \< 0.05). Specifically, patients with small celltype had 1.87 times the hazard of death compared to patients with squamous celltype (HR = 1.87).
+
+- Patients with adeno celltype had a significantly different hazard of death than patients with squamous celltype after holding other predictors constant (*p* = 0.004 \< 0.05). Specifically, patients with adeno celltype had 2.60 times the hazard of death compared to patients with squamous celltype (HR = 2.60).
+
+- Patients with large celltype showed no significant difference in the hazard of death compared to patients with squamous celltype after holding other predictors constant (*p* = 0.552 \> 0.05; HR = 1.206).
+
+*(Hazard ratio (HR) is the exp(coef) column in the results. HR \> 1 means higher hazard, HR = 1 means no difference, HR \<1 means lower hazard)*
+
+*(In the Cox PH model results:*
+
+- *For continuous variables in the Cox proportional hazards model, the p-value tests whether the variable is significantly associated with survival (whether its hazard ratio differs significantly from 1).*
+
+- *For categorical variables with* k *levels, R creates k-1 dummy variables by selecting 1 level as the reference category. The p-value for each dummy variable tests whether that category differs significantly from the reference category in terms of hazard. The reference category itself doesn't show up in the results. Therefore, if a categorical variable only has 2 levels, the p-value would test for whether the variable is significantly associated with survival.)*
+
+```{r}
+# Check assumption for Log-rank test and Cox PH model 
+ph_test <- cox.zph(cox_model)
+ph_test
+```
+
+For each variable, **H0:** The hazard ratio between any two groups (for categorical variables), or any two values (for continuous variables), remains constant over time.
+
+- trt, diagtime, age, prior: p-value \> 0.05, indicating that the PH assumption isn't violated.
+
+- celltype, karno: p-value = 0.0057 \< 0.05, indicating that the PH assumption is violated.
+
+Global p-value = 0.0011 \< 0.05, indicating that the PH assumption is overall violated.
+
+Therefore, the PH assumption was not fully satisfied, particularly for cell type and Karnofsky performance score. This violation should be considered when interpreting the Cox model coefficients, as the estimated hazard ratios may vary over time.
+
+```{r}
+plot(ph_test)
+```
+
+```{r}
+# Survival time prediction model 
+aft_model <- survreg(Surv(time, status) ~ ., data = train, dist = "weibull") 
+# dist = "exponential": Special case of Weibull distribution with constant hazard
+```
+
+```{r}
+# Prediction on training and test sets
+train_pred <- predict(aft_model, type = "quantile", p = 0.5)  
+
+test_pred <- predict(aft_model, newdata = test, type = "quantile", p = 0.5)  
+# p = 0.5 is the median survival time 
+```
+
+```{r}
+# Evaluate model with Harrell's C-index
+# Training set 
+cindex_train <- concordance(Surv(time, status) ~ train_pred, data = train)
+cindex_train$concordance
+
+# Test set 
+cindex_test <- concordance(Surv(time, status) ~ test_pred, data = test)
+cindex_test$concordance
+```
+
+The AFT model achieved a C-index of 0.726 on the training set and 0.773 on the test set. This result doesn't suggest overfitting. The slightly higher C-index on the test set is likely due to random variation arising from the train–test split and the relatively small sample size. Overall, the model demonstrated good performance, correctly ranking the survival outcomes of approximately 77.3% of comparable patient pairs in the test set.
+
+(C-index ranges from 0 to 1; C-index = 0.5 means no better than random chance, and C-index = 1 means perfect discrimination. Ex: Concordance = 0.742 means "*The model correctly ranked the survival outcomes of approximately 74.2% of comparable patient pairs*.")
