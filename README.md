@@ -1,4 +1,4 @@
-# Lung Cancer Survival Analysis and Prediction 
+# Lung Cancer Survival Analysis and Survival Time Prediction
 
 ## Overview
 
@@ -28,9 +28,7 @@ Finally, an AFT model with a Weibull distribution was fitted to predict median s
 
 ***Figure 1:** Overall Kaplan-Meier curve.*
 
-The overall Kaplan-Meier curve indicates poor overall survival among lung cancer patients, with a rapid decline in survival probability during the first 300 - 400 days after study entry. After approximately 600 days, the survival curve drops close to 0, indicating that only a very small proportion of patients survived
-beyond this time. The 95% confidence interval becomes wider over time because fewer patients remain at
-risk (*alive and still being followed*), making the survival estimates less reliable at later time points.
+The overall Kaplan-Meier curve indicates poor overall survival among lung cancer patients, with a rapid decline in survival probability during the first 300 - 400 days after study entry. After approximately 600 days, the survival curve drops close to 0, indicating that only a very small proportion of patients survived beyond this time. The 95% confidence interval becomes wider over time because fewer patients remain at risk (*alive and still being followed*), making the survival estimates less reliable at later time points.
 
 ![](images/km_treatment.jpg "Kaplan-Meier curves for the two treatment groups")
 
@@ -46,8 +44,7 @@ The confidence bands of the 2 curves above overlap considerably, especially afte
 
 In contrast, when comparing the cancer cell type groups, the Kaplan-Meier curves showed noticeable differences in survival among the 4 cell types: *squamous, large cell, small cell,* and *adeno.* The squamous group generally exhibited the highest survival probabilities throughout most of the study period, whereas the small cell and adeno groups show the steepest declines in survival probability, indicating poor survival outcomes. The large cell group demonstrates intermediate survival, with a more gradual decline than the other groups during the first 250 days.
 
-The curve corresponding to the adeno cell type approached 0 rapidly after around the first 200 days. The
-small cell and large cell curves extended to approximately 400 and 550 days, respectively, while the squamous cell curve stayed around 0.15 until the end of the study. Only 2 squamous group patients remained at risk by the end. Additionally, the log-rank test found a statistically significant difference in survival among the 4 cell type groups (p = 0.001).
+The curve corresponding to the adeno cell type approached 0 rapidly after around the first 200 days. The small cell and large cell curves extended to approximately 400 and 550 days, respectively, while the squamous cell curve stayed around 0.15 until the end of the study. Only 2 squamous group patients remained at risk by the end. Additionally, the log-rank test found a statistically significant difference in survival among the 4 cell type groups (p = 0.001).
 
 The Cox PH model was statistically significant overall (likelihood ratio test: p \< 0.001), indicating that at least one predictor was associated with patient survival. According to the model's results, Karnofsky performance score (*karno*) was significantly related to survival. The log-rank test earlier also showed that *celltype* was significantly associated with survival. By comparison, treatment type (*trt*), time from diagnosis to study entry (*diagtime*), age, and prior therapy status (*prior)* weren't significantly associated with survival after adjustment for the other variables.
 
